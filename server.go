@@ -9,6 +9,8 @@ import (
 )
 
 type Server struct {
+	Addr string
+
 	rooms     *RoomList
 	usernames *UsernameList
 }
@@ -26,13 +28,14 @@ func NewServer() *Server {
 }
 
 func (s *Server) ListenAndServe() error {
-	ln, err := net.Listen("tcp", ":9999")
+	ln, err := net.Listen("tcp", s.Addr)
 	if err != nil {
 		return err
 	}
+	log.Printf("Listening on %s\n", s.Addr)
 	defer ln.Close()
 	id := 1
-	Rooms.Create("lobby")
+	s.rooms.Create("lobby")
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -58,10 +61,7 @@ type RoomList struct {
 func (rl *RoomList) Create(name string) *Room {
 	rl.Lock()
 	defer rl.Unlock()
-	r := &Room{
-		Conns: make(map[int]*Conn),
-		Name:  name,
-	}
+	r := NewRoom(name)
 	rl.list[name] = r
 	return r
 }

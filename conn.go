@@ -80,6 +80,7 @@ func (c *Conn) JoinRoom(roomName string) {
 	r.Join(c)
 	// This is only called from the goroutine for Conn.handleConnection() so locking c.rooms is not nessisary.
 	c.rooms[roomName] = true
+	r.Announce(fmt.Sprintf("%s has joined the room", c.Username()), "server")
 }
 
 func (c *Conn) LeaveRoom(roomName string) error {
@@ -101,11 +102,14 @@ func (c Conn) Username() string {
 }
 
 func (c *Conn) Announce(msg string) {
-	// TODO(pmo): Allow users to set their timezone. This will require setting the timestamp in the receiving Conn.
+	c.announce(msg, c.Username())
+}
+
+func (c *Conn) announce(msg, username string) {
 	// This is only called from the goroutine for Conn.handleConnection() so locking c.rooms is not nessisary.
 	for r, inRoom := range c.rooms {
 		if inRoom {
-			c.server.rooms.Get(r).Announce(msg, c.Username())
+			c.server.rooms.Get(r).Announce(msg, username)
 		}
 	}
 }
@@ -114,7 +118,10 @@ func (c *Conn) handleMessages() {
 	for {
 		select {
 		case msg := <-c.outputChan:
-			io.WriteString(c.c, msg)
+			_, err := io.WriteString(c.c, msg)
+			if err != nil {
+				log.Printf("error writing to conn %d: %s\n", c.id, err)
+			}
 		case <-c.closeChan:
 			return
 		}
@@ -122,17 +129,33 @@ func (c *Conn) handleMessages() {
 }
 
 func (c *Conn) Close() error {
+	var err error
 	c.closeChan <- struct{}{}
 	for r, inRoom := range c.rooms {
 		if inRoom {
-			c.LeaveRoom(r)
+			e := c.LeaveRoom(r)
+			if e != nil {
+				err = e
+			}
 		}
 	}
-	err := c.server.usernames.removeUsername(c.id)
-	if err != nil {
-		log.Printf("error while closing connection: %s\n", err)
+
+	e := c.server.usernames.removeUsername(c.id)
+	if e != nil {
+		err = e
 	}
-	return c.c.Close()
+
+	e = c.c.Close()
+	if e != nil {
+		err = e
+	}
+
+	if err != nil {
+		// logging inside since we defer this function
+		log.Printf("error closing connection %d: %s\n", c.id, err)
+	}
+
+	return err
 }
 
 func (c *Conn) handleConnection() {
@@ -150,7 +173,6 @@ func (c *Conn) handleConnection() {
 			continue
 		}
 
-		log.Print(c.Username(), ": ", input)
 		if input[0] == '/' {
 			if !c.handleCommand(input) {
 				return
@@ -164,10 +186,25 @@ func (c *Conn) handleConnection() {
 	}
 }
 
+func (c *Conn) Say(room, message string) error {
+	if !c.inRoom(room) {
+		return errors.New("You are not in that room")
+	}
+	r := c.server.rooms.Get(room)
+	if r == nil {
+		// should never happen
+		return errors.New("You were in a room that did not exist")
+	}
+	r.Announce(message, c.Username())
+	return nil
+}
+
 // handleCommand performs the actions of a /command.
 // handleCommand returns false if handleConnection is to quit
 func (c *Conn) handleCommand(input string) bool {
 	fields := strings.Fields(input)
+	// As more commands are added we can add: type CommandFunc func(c *Conn, input string, fields []string)
+	// And then this switch can be changed to a map[string]CommandFunc.
 	switch fields[0] {
 	case "/help":
 		io.WriteString(c.c, helpText)
@@ -183,12 +220,14 @@ func (c *Conn) handleCommand(input string) bool {
 			fmt.Fprintln(c.c, "Username cannot be 'server'")
 			return true
 		}
+		oldUsername := c.Username()
 		err := c.server.usernames.modifyUsername(c.id, fields[1])
 		if err != nil {
 			fmt.Fprintln(c.c, err)
 			return true
 		}
 		c.username = fields[1]
+		c.announce(fmt.Sprintf("%s is now known as %s\n", oldUsername, c.Username()), "server")
 	case "/join":
 		if len(fields) != 2 {
 			fmt.Fprintln(c.c, "Usage is /join <room>")
@@ -223,21 +262,15 @@ func (c *Conn) handleCommand(input string) bool {
 			fmt.Fprintln(c.c, "Usage is /say <room> <message>")
 			return true
 		}
-		if !c.inRoom(fields[1]) {
-			fmt.Fprintln(c.c, "You are not in that room")
-			return true
-		}
-		r := c.server.rooms.Get(fields[1])
-		if r == nil {
-			c.LeaveRoom(fields[1])
-			fmt.Fprintln(c.c, "You were in a room that did not exist")
-			return true
-		}
 		// Find the index of the first message field of the input.
 		// This way we don't loose the whitespace of the message.
-		i := strings.Index(input, fields[3])
+		i := strings.Index(input, fields[2])
 		msg := input[i:]
-		r.Announce(msg, c.Username())
+		err := c.Say(fields[1], msg)
+		if err != nil {
+			fmt.Fprintln(c.c, err)
+			return true
+		}
 	default:
 		fmt.Fprintf(c.c, "Unknown command: %s\n", fields[0])
 	}

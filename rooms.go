@@ -13,6 +13,13 @@ type Room struct {
 	Conns map[int]*Conn
 }
 
+func NewRoom(name string) *Room {
+	return &Room{
+		Conns: make(map[int]*Conn),
+		Name:  name,
+	}
+}
+
 func (r *Room) Join(conn *Conn) {
 	r.Lock()
 	defer r.Unlock()
@@ -26,7 +33,9 @@ func (r *Room) Leave(conn *Conn) {
 }
 
 func (r *Room) Announce(msg, username string) {
+	// TODO(pmo): Allow users to set their timezone. This will require setting the timestamp in the receiving Conn.
 	roomMsg := fmt.Sprintf("%s %s %s: %s\n", time.Now().Format(time.RFC3339), r.Name, username, msg)
+	log.Printf("%s %s: %s\n", r.Name, username, msg)
 	r.RLock()
 	defer r.RUnlock()
 	for id, conn := range r.Conns {
