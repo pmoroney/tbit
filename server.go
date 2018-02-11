@@ -8,25 +8,28 @@ import (
 	"sync"
 )
 
+// Server controls the room list as well as username list.
 type Server struct {
 	Addr string
 
-	rooms     *RoomList
-	usernames *UsernameList
+	rooms     *roomList
+	usernames *usernameList
 }
 
+// NewServer creates a new server
 func NewServer() *Server {
 	return &Server{
-		rooms: &RoomList{
+		rooms: &roomList{
 			list: make(map[string]*Room),
 		},
-		usernames: &UsernameList{
+		usernames: &usernameList{
 			usernameToID: make(map[string]int),
 			idToUsername: make(map[int]string),
 		},
 	}
 }
 
+// ListenAndServe listens on `Addr` and spawns connections in their own goroutine.
 func (s *Server) ListenAndServe() error {
 	ln, err := net.Listen("tcp", s.Addr)
 	if err != nil {
@@ -35,7 +38,7 @@ func (s *Server) ListenAndServe() error {
 	log.Printf("Listening on %s\n", s.Addr)
 	defer ln.Close()
 	id := 1
-	s.rooms.Create("lobby")
+	s.rooms.create("lobby")
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -53,12 +56,14 @@ func (s *Server) ListenAndServe() error {
 	}
 }
 
-type RoomList struct {
+// roomList encapsulates the list of rooms
+type roomList struct {
 	sync.RWMutex
 	list map[string]*Room
 }
 
-func (rl *RoomList) Create(name string) *Room {
+// create creates a new room
+func (rl *roomList) create(name string) *Room {
 	rl.Lock()
 	defer rl.Unlock()
 	r := NewRoom(name)
@@ -66,7 +71,8 @@ func (rl *RoomList) Create(name string) *Room {
 	return r
 }
 
-func (rl *RoomList) Get(name string) *Room {
+// get returns the named room
+func (rl *roomList) get(name string) *Room {
 	rl.RLock()
 	defer rl.RUnlock()
 	r, ok := rl.list[name]
@@ -76,7 +82,8 @@ func (rl *RoomList) Get(name string) *Room {
 	return r
 }
 
-func (rl *RoomList) ListAll() []string {
+// listAll returns a list of all the room names
+func (rl *roomList) listAll() []string {
 	rl.RLock()
 	defer rl.RUnlock()
 	list := make([]string, 0, len(rl.list))
@@ -87,19 +94,22 @@ func (rl *RoomList) ListAll() []string {
 	return list
 }
 
-type UsernameList struct {
+// usernameList encapsulates the mapping of id to username and visa versa.
+type usernameList struct {
 	sync.RWMutex
 	usernameToID map[string]int
 	idToUsername map[int]string
 }
 
-func (ul *UsernameList) getUsername(id int) string {
+// getUsername returns the username for the connection id
+func (ul *usernameList) getUsername(id int) string {
 	ul.RLock()
 	defer ul.RUnlock()
 	return ul.idToUsername[id]
 }
 
-func (ul *UsernameList) addUsername(id int, name string) error {
+// addUsername creates a username for a new connection id
+func (ul *usernameList) addUsername(id int, name string) error {
 	ul.Lock()
 	defer ul.Unlock()
 
@@ -118,7 +128,8 @@ func (ul *UsernameList) addUsername(id int, name string) error {
 	return nil
 }
 
-func (ul *UsernameList) removeUsername(id int) error {
+// removeUsername removes the username for a connection id. Used for disconnecting connections.
+func (ul *usernameList) removeUsername(id int) error {
 	ul.Lock()
 	defer ul.Unlock()
 
@@ -132,7 +143,8 @@ func (ul *UsernameList) removeUsername(id int) error {
 	return nil
 }
 
-func (ul *UsernameList) modifyUsername(id int, name string) error {
+// modifyUsername changes a username for a connection.
+func (ul *usernameList) modifyUsername(id int, name string) error {
 	ul.Lock()
 	defer ul.Unlock()
 

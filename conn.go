@@ -12,10 +12,15 @@ import (
 
 var helpText = `Welcome to Tbit chat!
 Commands:
-/exit
-/help
-/quit
-/user <username>
+/help - this text
+/exit - close your connection
+/quit - close your connection
+/user <username> - change your username
+/rooms - lists rooms that have been created
+/join <room> - joins a new room
+/leave <room> - leaves a room you are in
+/list - lists which rooms you are currently in
+/say <room> <message> - used to send a message to a specific room
 `
 
 var welcomeText = `Welcome to Tbit chat!
@@ -24,6 +29,7 @@ Your username is currently: %s
 Use the "/user <username>" command to change it
 `
 
+// Conn holds all the data needed for a specific connection
 type Conn struct {
 	c          io.ReadWriteCloser
 	server     *Server
@@ -72,48 +78,48 @@ func (c *Conn) listRooms() []string {
 	return list
 }
 
+// JoinRoom joins this connection to a room and announces the joining. It creates the room if it doesn't exist.
 func (c *Conn) JoinRoom(roomName string) {
-	r := c.server.rooms.Get(roomName)
+	r := c.server.rooms.get(roomName)
 	if r == nil {
-		r = c.server.rooms.Create(roomName)
+		r = c.server.rooms.create(roomName)
 	}
 	r.Join(c)
 	// This is only called from the goroutine for Conn.handleConnection() so locking c.rooms is not nessisary.
 	c.rooms[roomName] = true
-	r.Announce(fmt.Sprintf("%s has joined the room", c.Username()), "server")
+	r.Announce(fmt.Sprintf("%s has joined the room", c.username), "server")
 }
 
+// LeaveRoom leaves a room that the connection is in.
 func (c *Conn) LeaveRoom(roomName string) error {
 	if !c.inRoom(roomName) {
 		return errors.New("you are not currently in that room")
 	}
 	c.rooms[roomName] = false
-	r := c.server.rooms.Get(roomName)
+	r := c.server.rooms.get(roomName)
 	if r == nil {
 		return errors.New("you were in a room that did not exist")
 	}
-	r.Announce(fmt.Sprintf("%s has left the room", c.Username()), "server")
+	r.Announce(fmt.Sprintf("%s has left the room", c.username), "server")
 	r.Leave(c)
 	return nil
 }
 
-func (c Conn) Username() string {
-	return c.username
-}
-
+// Announce sends a message to all rooms this connection is in.
 func (c *Conn) Announce(msg string) {
-	c.announce(msg, c.Username())
+	c.announce(msg, c.username)
 }
 
 func (c *Conn) announce(msg, username string) {
 	// This is only called from the goroutine for Conn.handleConnection() so locking c.rooms is not nessisary.
 	for r, inRoom := range c.rooms {
 		if inRoom {
-			c.server.rooms.Get(r).Announce(msg, username)
+			c.server.rooms.get(r).Announce(msg, username)
 		}
 	}
 }
 
+// handleMessages handles all the output messages for the connection.
 func (c *Conn) handleMessages() {
 	for {
 		select {
@@ -128,6 +134,7 @@ func (c *Conn) handleMessages() {
 	}
 }
 
+// Close closes the connection, leaves all rooms, and frees up the username.
 func (c *Conn) Close() error {
 	var err error
 	c.closeChan <- struct{}{}
@@ -158,10 +165,11 @@ func (c *Conn) Close() error {
 	return err
 }
 
+// handleConnection sends the welcome message, starts the output handler and then handles all input for the connection.
 func (c *Conn) handleConnection() {
 	defer c.Close()
 
-	fmt.Fprintf(c.c, welcomeText, c.Username())
+	fmt.Fprintf(c.c, welcomeText, c.username)
 
 	go c.handleMessages()
 
@@ -186,16 +194,17 @@ func (c *Conn) handleConnection() {
 	}
 }
 
+// Say announces a message to a specific room
 func (c *Conn) Say(room, message string) error {
 	if !c.inRoom(room) {
 		return errors.New("You are not in that room")
 	}
-	r := c.server.rooms.Get(room)
+	r := c.server.rooms.get(room)
 	if r == nil {
 		// should never happen
 		return errors.New("You were in a room that did not exist")
 	}
-	r.Announce(message, c.Username())
+	r.Announce(message, c.username)
 	return nil
 }
 
@@ -209,7 +218,7 @@ func (c *Conn) handleCommand(input string) bool {
 	case "/help":
 		io.WriteString(c.c, helpText)
 	case "/exit", "/quit":
-		log.Printf("%s has disconnected\n", c.Username())
+		log.Printf("%s has disconnected\n", c.username)
 		return false
 	case "/user":
 		if len(fields) != 2 {
@@ -220,14 +229,14 @@ func (c *Conn) handleCommand(input string) bool {
 			fmt.Fprintln(c.c, "Username cannot be 'server'")
 			return true
 		}
-		oldUsername := c.Username()
+		oldUsername := c.username
 		err := c.server.usernames.modifyUsername(c.id, fields[1])
 		if err != nil {
 			fmt.Fprintln(c.c, err)
 			return true
 		}
 		c.username = fields[1]
-		c.announce(fmt.Sprintf("%s is now known as %s\n", oldUsername, c.Username()), "server")
+		c.announce(fmt.Sprintf("%s is now known as %s\n", oldUsername, c.username), "server")
 	case "/join":
 		if len(fields) != 2 {
 			fmt.Fprintln(c.c, "Usage is /join <room>")
@@ -245,7 +254,7 @@ func (c *Conn) handleCommand(input string) bool {
 		}
 	case "/rooms":
 		fmt.Fprintln(c.c, "Here is a list of the current rooms:")
-		for _, r := range c.server.rooms.ListAll() {
+		for _, r := range c.server.rooms.listAll() {
 			fmt.Fprintln(c.c, r)
 		}
 		// Output an empty line so the client has a way to know if the list has ended.
