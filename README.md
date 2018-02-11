@@ -37,8 +37,8 @@ Todo
 * Per room logging.
 * Better user messaging for edge cases, such as announcing when not in any rooms.
 * Add some hardcoded values to the config file.
-** buffer sizes
-** timeouts
-** welcome and help messages
-** default room name
+  * buffer sizes
+  * timeouts
+  * welcome and help messages
+  * default room name
 
